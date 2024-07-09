@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <numeric>
 #include "soc/rtc.h"
-#include <deque>
+// #include <deque>
 #include <LiquidCrystal_I2C.h>
 
 using namespace std;
@@ -23,7 +23,7 @@ const int petTray_sck = 4;
 const int platformLoadCell_dout = 32;
 const int platformLoadCell_sck = 33;
 // Calibration values
-float calibrationValue_petTray = 2542.704; // petTray Calibration - Past Values: 2291.28 , 2642.85
+float calibrationValue_petTray = 1955.32;  // petTray Calibration - Past Values: 2291.28 , 2642.85, 2542.704,  1955.32
 float calibrationValue_platform = -21.114; // platform Calibration - Past Values: 21.68
 // LoadCell objects+
 HX711 LoadCell_petTray;
@@ -66,8 +66,9 @@ const int foodTwoTrigPin = 15;
 const int foodTwoEchoPin = 35;
 
 // Fluctuation handling
-deque<float> weightReadings;
-const int smoothingWindow = 20;            // Number of readings to average
+vector<float> weightReadings;
+int consistentCount = 0;
+const int smoothingWindow = 5;             // Number of readings to average
 const int consistentReadingsThreshold = 3; // Number of consistent readings before stopping
 const float tolerance = 0.7;               // Allowable error margin in grams
 
@@ -194,10 +195,6 @@ unsigned long lastPetFoodStreamTime = 0;
 
 void loop()
 {
-  // printLoadCellWeights();
-  // delay(1000);
-
-  // Handle Client method provided by WebServer to run the server
   server.handleClient();
 
   selectedMotor = selectMotor(selectedFood); // Example: change "food_01" to your actual variable
@@ -220,104 +217,112 @@ void loop()
 
       if (millis() > t + serialPrintInterval)
       {
-
-        float petTrayAmount = LoadCell_petTray.get_units();
+        float petTrayAmount = LoadCell_petTray.get_units(1);
+        Serial.println(petTrayAmount);
         weightReadings.push_back(petTrayAmount);
+        // long rawValue = LoadCell_petTray.read();
+        // float petTrayAmount = (float)(rawValue - LoadCell_petTray.get_offset()) / LoadCell_petTray.get_scale();
+        // weightReadings.push_back(petTrayAmount);
 
         if (weightReadings.size() > smoothingWindow)
         {
-          weightReadings.pop_front(); // Remove the oldest reading
+          weightReadings.erase(weightReadings.begin()); // Remove the oldest reading
         }
 
-        float smoothedWeight = accumulate(weightReadings.begin(), weightReadings.end(), 0.0) / weightReadings.size();
-
-        Serial.print("Current Smoothed Weight: ");
-        Serial.println(smoothedWeight);
-
-        if (checkConsistentWeight(amountToDispense, tolerance))
+        if (!weightReadings.empty())
         {
-          if (selectedMotor == 1)
-          {
-            stopDispenseMotor1();
-          }
-          else if (selectedMotor == 2)
-          {
-            stopDispenseMotor2();
-          }
-          Serial.println(" -- Reached the Threshold, STOP");
-          Serial.print("Smoothed load cell output val: ");
+          float sum = accumulate(weightReadings.begin(), weightReadings.end(), 0.0);
+          float smoothedWeight = sum / weightReadings.size();
+
+          Serial.print("Current Smoothed Weight: ");
           Serial.println(smoothedWeight);
-          Serial.println("Dispensing Finished");
-          Serial.println("Calculating Food Consumed");
-          float foodConsumed = calculateFoodConsumption();
-          Serial.println("Recording Feeding Data to Firestore");
-          recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed);
-          Serial.println("Resetting the Data Received Flag");
-          dataReceived = false;
-          newDataReady = false;
-        }
-        else if (smoothedWeight < amountToDispense)
-        {
-          // Adjust rotation limit based on selected motor
-          int rotationLimit = (selectedMotor == 1) ? 3 : 4;
 
-          if (rotationCount < rotationLimit)
+          if (checkThresholdDuringDispense(smoothedWeight, tolerance) && checkConsistentWeight(smoothedWeight, tolerance))
           {
-            if (isClockwise)
+            if (smoothedWeight >= amountToDispense)
             {
               if (selectedMotor == 1)
               {
-                activateMotor1Relay();
-                Serial.println(" Rotating Clockwise Relay 1 (a)--");
-                dispenseMotor1A();
+                stopDispenseMotor1();
               }
               else if (selectedMotor == 2)
               {
-                activateMotor2Relay();
-                Serial.println(" Rotating Clockwise Relay 2 (a)--");
-                dispenseMotor2A();
+                stopDispenseMotor2();
               }
+              Serial.println(" -- Reached the Threshold, STOP");
               Serial.print("Smoothed load cell output val: ");
               Serial.println(smoothedWeight);
+              Serial.println("Dispensing Finished");
+              Serial.println("Calculating Food Consumed");
+              float foodConsumed = calculateFoodConsumption();
+              Serial.println("Recording Feeding Data to Firestore");
+              recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed);
+              Serial.println("Resetting the Data Received Flag");
+              dataReceived = false;
+              newDataReady = false;
             }
             else
             {
-              if (selectedMotor == 1)
+              // Adjust rotation limit based on selected motor
+              int rotationLimit = (selectedMotor == 1) ? 3 : 4;
+
+              if (rotationCount < rotationLimit)
               {
-                activateMotor1Relay();
-                Serial.println("Counter Clockwise Relay 1 (b)--");
-                dispenseMotor1B();
+                if (isClockwise)
+                {
+                  if (selectedMotor == 1)
+                  {
+                    activateMotor1Relay();
+                    Serial.println(" Rotating Clockwise Relay 1 (a)--");
+                    dispenseMotor1A();
+                  }
+                  else if (selectedMotor == 2)
+                  {
+                    activateMotor2Relay();
+                    Serial.println(" Rotating Clockwise Relay 2 (a)--");
+                    dispenseMotor2A();
+                  }
+                  Serial.print("Smoothed load cell output val: ");
+                  Serial.println(smoothedWeight);
+                }
+                else
+                {
+                  if (selectedMotor == 1)
+                  {
+                    activateMotor1Relay();
+                    Serial.println("Counter Clockwise Relay 1 (b)--");
+                    dispenseMotor1B();
+                  }
+                  else if (selectedMotor == 2)
+                  {
+                    activateMotor2Relay();
+                    Serial.println("Counter Clockwise Relay 2 (b)--");
+                    dispenseMotor2B();
+                  }
+                  Serial.print("Smoothed load cell output val: ");
+                  Serial.println(smoothedWeight);
+                }
+                rotationCount++;
               }
-              else if (selectedMotor == 2)
+              else
               {
-                activateMotor2Relay();
-                Serial.println("Counter Clockwise Relay 2 (b)--");
-                dispenseMotor2B();
+                rotationCount = 0;
+                isClockwise = !isClockwise; // Toggle direction
               }
               Serial.print("Smoothed load cell output val: ");
               Serial.println(smoothedWeight);
+              newDataReady = false;
+              t = millis();
             }
-            rotationCount++;
           }
           else
           {
-            rotationCount = 0;
-            isClockwise = !isClockwise; // Toggle direction
+            Serial.println("Not enough consistent readings.");
           }
-          Serial.print("Smoothed load cell output val: ");
-          Serial.println(smoothedWeight);
-          newDataReady = false;
-          t = millis();
         }
         else
         {
-          static unsigned long lastThresholdPrintTime = 0;
-          if (millis() - lastThresholdPrintTime >= 2000)
-          { // Print every 2 seconds
-            Serial.println("Stepper Motor Not Moving Because the Threshold is Zero");
-
-            lastThresholdPrintTime = millis();
-          }
+          Serial.println("Weight readings array is empty, skipping smoothed weight calculation.");
         }
       }
     }
@@ -346,7 +351,7 @@ void loop()
 
 bool checkConsistentWeight(float targetWeight, float tolerance)
 {
-  int consistentCount = 0;
+  consistentCount = 0;
   for (float reading : weightReadings)
   {
     if (abs(reading - targetWeight) <= tolerance)
@@ -359,39 +364,62 @@ bool checkConsistentWeight(float targetWeight, float tolerance)
   return consistentCount >= consistentReadingsThreshold;
 }
 
+bool checkThresholdDuringDispense(float threshold, float tolerance)
+{
+  if (weightReadings.empty())
+  {
+    return false; // Ensure weightReadings is not empty
+  }
+
+  float smoothedWeight = accumulate(weightReadings.begin(), weightReadings.end(), 0.0) / weightReadings.size();
+
+  Serial.print("Current Smoothed Weight: ");
+  Serial.println(smoothedWeight);
+
+  if (abs(smoothedWeight - threshold) <= tolerance)
+  {
+    consistentCount++;
+    Serial.print("Consistent Count: ");
+    Serial.println(consistentCount);
+
+    if (consistentCount >= consistentReadingsThreshold)
+    { // Adjust consistentCountThreshold if needed
+      return true;
+    }
+  }
+  else
+  {
+    consistentCount = 0; // Reset if the weight is not within the tolerance
+  }
+
+  return false;
+}
+
 void updateWeightReadings()
 {
   float petTrayAmount = LoadCell_petTray.get_units();
   weightReadings.push_back(petTrayAmount);
   if (weightReadings.size() > smoothingWindow)
   {
-    weightReadings.pop_front();
+    weightReadings.erase(weightReadings.begin()); // Remove the oldest reading
   }
   Serial.print("Current Weight Reading: ");
   Serial.println(petTrayAmount);
-}
-
-bool checkThresholdDuringDispense(float targetWeight, float tolerance)
-{
-  float smoothedWeight = accumulate(weightReadings.begin(), weightReadings.end(), 0.0) / weightReadings.size();
-  Serial.print("Smoothed Weight during dispense: ");
-  Serial.println(smoothedWeight);
-  return abs(smoothedWeight - targetWeight) <= tolerance;
 }
 
 int selectMotor(const String &selectedFood)
 {
   if (selectedFood == "food_01")
   {
-    return 1; // Use motor1 for food_01
+    return 1;
   }
   else if (selectedFood == "food_02")
   {
-    return 2; // Use motor2 for food_02
+    return 2;
   }
   else
   {
-    return 0; // Invalid food selection
+    return 0;
   }
 }
 
@@ -402,33 +430,46 @@ void dispenseMotor1A()
   {
     motor1.step(smallStep);
     delay(10);
-    updateWeightReadings();
 
-    if (checkThresholdDuringDispense(amountToDispense, tolerance))
+    if (!weightReadings.empty())
     {
-      stopDispenseMotor1();
-      Serial.print("Reached threshold during dispenseMotor1A: ");
-      lcd.setCursor(0, 0);
-      lcd.print("Amount Dispense");
-      lcd.setCursor(0, 1);
-      float smoothedWeight = accumulate(weightReadings.begin(), weightReadings.end(), 0.0) / weightReadings.size();
-      lcd.print(String(smoothedWeight));
-      Serial.println(smoothedWeight);
-      Serial.println("Calculating Food Consumed");
-      float foodConsumed = calculateFoodConsumption();
-      Serial.println("Recording Feeding Data to Firestore");
-      recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed);
-      lcd.setCursor(0, 0);
-      lcd.print("Stored Data");
-      lcd.setCursor(0, 1);
-      lcd.print("Successfully");
-      dataReceived = false;
-      return;
-    }
+      float sum = std::accumulate(weightReadings.begin(), weightReadings.end(), 0.0);
+      size_t readingSize = weightReadings.size();
 
-    float smoothedWeight = accumulate(weightReadings.begin(), weightReadings.end(), 0.0) / weightReadings.size();
-    Serial.print("Smoothed load cell output val: ");
-    Serial.println(smoothedWeight);
+      if (readingSize > 0)
+      {
+        float smoothedWeight = sum / readingSize;
+
+        if (checkThresholdDuringDispense(amountToDispense, tolerance))
+        {
+          if (checkConsistentWeight(amountToDispense, tolerance))
+          {
+            stopDispenseMotor1();
+            Serial.print("Reached threshold during dispenseMotor1A: ");
+            lcd.setCursor(0, 0);
+            lcd.print("Amount Dispensed");
+            lcd.setCursor(0, 1);
+            lcd.print(String(amountToDispense));
+            Serial.println(amountToDispense);
+            Serial.println("Calculating Food Consumed");
+            float foodConsumed = calculateFoodConsumption();
+            LoadCell_petTray.tare();
+            Serial.println("Recording Feeding Data to Firestore");
+            recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed);
+            lcd.setCursor(0, 0);
+            lcd.print("Stored Data");
+            lcd.setCursor(0, 1);
+            lcd.print("Successfully");
+            dataReceived = false;
+            return;
+          }
+        }
+      }
+    }
+    else
+    {
+      Serial.println("Weight readings array is empty, skipping smoothed weight calculation.");
+    }
   }
 }
 
@@ -439,33 +480,46 @@ void dispenseMotor1B()
   {
     motor1.step(-smallStep);
     delay(10);
-    updateWeightReadings();
 
-    if (checkThresholdDuringDispense(amountToDispense, tolerance))
+    if (!weightReadings.empty())
     {
-      stopDispenseMotor1();
-      Serial.print("Reached threshold during dispenseMotor1B: ");
-      lcd.setCursor(0, 0);
-      lcd.print("Amount Dispense");
-      lcd.setCursor(0, 1);
-      float smoothedWeight = accumulate(weightReadings.begin(), weightReadings.end(), 0.0) / weightReadings.size();
-      lcd.print(String(smoothedWeight));
-      Serial.println(smoothedWeight);
-      Serial.println("Calculating Food Consumed");
-      float foodConsumed = calculateFoodConsumption();
-      Serial.println("Recording Feeding Data to Firestore");
-      recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed);
-      lcd.setCursor(0, 0);
-      lcd.print("Stored Data");
-      lcd.setCursor(0, 1);
-      lcd.print("Successfully");
-      dataReceived = false;
-      return;
-    }
+      float sum = std::accumulate(weightReadings.begin(), weightReadings.end(), 0.0);
+      size_t readingSize = weightReadings.size();
 
-    float smoothedWeight = accumulate(weightReadings.begin(), weightReadings.end(), 0.0) / weightReadings.size();
-    Serial.print("Smoothed load cell output val: ");
-    Serial.println(smoothedWeight);
+      if (readingSize > 0)
+      {
+        float smoothedWeight = sum / readingSize;
+
+        if (checkThresholdDuringDispense(amountToDispense, tolerance))
+        {
+          if (checkConsistentWeight(amountToDispense, tolerance))
+          {
+            stopDispenseMotor1();
+            Serial.print("Reached threshold during dispenseMotor1B: ");
+            lcd.setCursor(0, 0);
+            lcd.print("Amount Dispensed");
+            lcd.setCursor(0, 1);
+            lcd.print(String(amountToDispense));
+            Serial.println(amountToDispense);
+            Serial.println("Calculating Food Consumed");
+            float foodConsumed = calculateFoodConsumption();
+            LoadCell_petTray.tare();
+            Serial.println("Recording Feeding Data to Firestore");
+            recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed);
+            lcd.setCursor(0, 0);
+            lcd.print("Stored Data");
+            lcd.setCursor(0, 1);
+            lcd.print("Successfully");
+            dataReceived = false;
+            return;
+          }
+        }
+      }
+    }
+    else
+    {
+      Serial.println("Weight readings array is empty, skipping smoothed weight calculation.");
+    }
   }
 }
 
@@ -476,33 +530,46 @@ void dispenseMotor2A()
   {
     motor2.step(smallStep);
     delay(10);
-    updateWeightReadings();
 
-    if (checkThresholdDuringDispense(amountToDispense, tolerance))
+    if (!weightReadings.empty())
     {
-      stopDispenseMotor2();
-      Serial.print("Reached threshold during dispenseMotor2A: ");
-      lcd.setCursor(0, 0);
-      lcd.print("Amount Dispense");
-      lcd.setCursor(0, 1);
-      float smoothedWeight = accumulate(weightReadings.begin(), weightReadings.end(), 0.0) / weightReadings.size();
-      lcd.print(String(smoothedWeight));
-      Serial.println(smoothedWeight);
-      Serial.println("Calculating Food Consumed");
-      float foodConsumed = calculateFoodConsumption();
-      Serial.println("Recording Feeding Data to Firestore");
-      recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed);
-      lcd.setCursor(0, 0);
-      lcd.print("Stored Data");
-      lcd.setCursor(0, 1);
-      lcd.print("Successfully");
-      dataReceived = false;
-      return;
-    }
+      float sum = std::accumulate(weightReadings.begin(), weightReadings.end(), 0.0);
+      size_t readingSize = weightReadings.size();
 
-    float smoothedWeight = accumulate(weightReadings.begin(), weightReadings.end(), 0.0) / weightReadings.size();
-    Serial.print("Smoothed load cell output val: ");
-    Serial.println(smoothedWeight);
+      if (readingSize > 0)
+      {
+        float smoothedWeight = sum / readingSize;
+
+        if (checkThresholdDuringDispense(amountToDispense, tolerance))
+        {
+          if (checkConsistentWeight(amountToDispense, tolerance))
+          {
+            stopDispenseMotor2();
+            Serial.print("Reached threshold during dispenseMotor2A: ");
+            lcd.setCursor(0, 0);
+            lcd.print("Amount Dispensed");
+            lcd.setCursor(0, 1);
+            lcd.print(String(amountToDispense));
+            Serial.println(amountToDispense);
+            Serial.println("Calculating Food Consumed");
+            float foodConsumed = calculateFoodConsumption();
+            LoadCell_petTray.tare();
+            Serial.println("Recording Feeding Data to Firestore");
+            recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed);
+            lcd.setCursor(0, 0);
+            lcd.print("Stored Data");
+            lcd.setCursor(0, 1);
+            lcd.print("Successfully");
+            dataReceived = false;
+            return;
+          }
+        }
+      }
+    }
+    else
+    {
+      Serial.println("Weight readings array is empty, skipping smoothed weight calculation.");
+    }
   }
 }
 
@@ -513,46 +580,59 @@ void dispenseMotor2B()
   {
     motor2.step(-smallStep);
     delay(10);
-    updateWeightReadings();
 
-    if (checkThresholdDuringDispense(amountToDispense, tolerance))
+    if (!weightReadings.empty())
     {
-      stopDispenseMotor2();
-      Serial.print("Reached threshold during dispenseMotor2B: ");
-      lcd.setCursor(0, 0);
-      lcd.print("Amount Dispense");
-      lcd.setCursor(0, 1);
-      float smoothedWeight = accumulate(weightReadings.begin(), weightReadings.end(), 0.0) / weightReadings.size();
-      lcd.print(String(smoothedWeight));
-      Serial.println(smoothedWeight);
-      Serial.println("Calculating Food Consumed");
-      float foodConsumed = calculateFoodConsumption();
-      Serial.println("Recording Feeding Data to Firestore");
-      recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed);
-      lcd.setCursor(0, 0);
-      lcd.print("Stored Data");
-      lcd.setCursor(0, 1);
-      lcd.print("Successfully");
-      dataReceived = false;
-      return;
-    }
+      float sum = std::accumulate(weightReadings.begin(), weightReadings.end(), 0.0);
+      size_t readingSize = weightReadings.size();
 
-    float smoothedWeight = accumulate(weightReadings.begin(), weightReadings.end(), 0.0) / weightReadings.size();
-    Serial.print("Smoothed load cell output val: ");
-    Serial.println(smoothedWeight);
+      if (readingSize > 0)
+      {
+        float smoothedWeight = sum / readingSize;
+
+        if (checkThresholdDuringDispense(amountToDispense, tolerance))
+        {
+          if (checkConsistentWeight(amountToDispense, tolerance))
+          {
+            stopDispenseMotor2();
+            Serial.print("Reached threshold during dispenseMotor2B: ");
+            lcd.setCursor(0, 0);
+            lcd.print("Amount Dispensed");
+            lcd.setCursor(0, 1);
+            lcd.print(String(amountToDispense));
+            Serial.println(amountToDispense);
+            Serial.println("Calculating Food Consumed");
+            float foodConsumed = calculateFoodConsumption();
+            LoadCell_petTray.tare();
+            Serial.println("Recording Feeding Data to Firestore");
+            recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed);
+            lcd.setCursor(0, 0);
+            lcd.print("Stored Data");
+            lcd.setCursor(0, 1);
+            lcd.print("Successfully");
+            dataReceived = false;
+            return;
+          }
+        }
+      }
+    }
+    else
+    {
+      Serial.println("Weight readings array is empty, skipping smoothed weight calculation.");
+    }
   }
 }
 
 void stopDispenseMotor1()
 {
-  motor1.setSpeed(0);              // Stop motor1
+  // motor1.setSpeed(0);              // Stop motor1
   digitalWrite(motor1Relay, HIGH); // Turn off the relay to stop the motor
   digitalWrite(motor1Relay, HIGH); // Turn off the relay to stop the motor
 }
 
 void stopDispenseMotor2()
 {
-  motor2.setSpeed(0);              // Stop motor2
+  // motor2.setSpeed(0);              // Stop motor2
   digitalWrite(motor2Relay, HIGH); // Turn off the relay to stop the motor
   digitalWrite(motor2Relay, HIGH); // Turn off the relay to stop the motor
 }
