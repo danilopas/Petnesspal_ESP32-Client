@@ -11,6 +11,8 @@
 #include "soc/rtc.h"
 // #include <deque>
 #include <LiquidCrystal_I2C.h>
+#include <addons/TokenHelper.h>
+#include <addons/RTDBHelper.h>
 
 using namespace std;
 
@@ -42,7 +44,7 @@ int motor2Relay = 13; // Relay for motor2
 // Motor Config/constructor
 const int motorSpeed = 100;
 const int stepsPerRevolution = 200;
-const int smallStep = 200;                                    // Small step size for motor control
+const int smallStep = 250;                                    // Small step size for motor control
 Stepper motor1 = Stepper(stepsPerRevolution, 12, 14, 27, 26); // motor1
 Stepper motor2 = Stepper(stepsPerRevolution, 17, 5, 18, 19);  // motor2
 
@@ -79,8 +81,8 @@ int selectedMotor = 0;
 const int baseDistance = 20; // Modify this value to set the base distance for 0%
 
 // Definitions for WiFi
-const char *WIFI_SSID = "GlobeAtHome_8B831"; // Baklang Theozoids
-const char *WIFI_PASSWORD = "4588CDE3";      // Badingakomalala@123
+const char *WIFI_SSID = "Smartbro-4BC4"; // Baklang Theozoids // GlobeAtHome_8B831 // Test_3
+const char *WIFI_PASSWORD = "smartbro";  // Badingakomalala@123 // 4588CDE3 // test3null
 
 // Definitions for Firebase Database
 const char *FIREBASE_HOST = "https://petness-92c55-default-rtdb.asia-southeast1.firebasedatabase.app/";
@@ -375,6 +377,10 @@ bool checkThresholdDuringDispense(float threshold, float tolerance)
 
   Serial.print("Current Smoothed Weight: ");
   Serial.println(smoothedWeight);
+  lcd.setCursor(0, 0);
+  lcd.print("Amount Dispensed");
+  lcd.setCursor(0, 1);
+  lcd.print(String(smoothedWeight));
 
   if (abs(smoothedWeight - threshold) <= tolerance)
   {
@@ -453,7 +459,7 @@ void dispenseMotor1A()
             Serial.println(amountToDispense);
             Serial.println("Calculating Food Consumed");
             float foodConsumed = calculateFoodConsumption();
-            LoadCell_petTray.tare();
+            // LoadCell_petTray.tare();
             Serial.println("Recording Feeding Data to Firestore");
             recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed);
             lcd.setCursor(0, 0);
@@ -503,7 +509,7 @@ void dispenseMotor1B()
             Serial.println(amountToDispense);
             Serial.println("Calculating Food Consumed");
             float foodConsumed = calculateFoodConsumption();
-            LoadCell_petTray.tare();
+            // LoadCell_petTray.tare();
             Serial.println("Recording Feeding Data to Firestore");
             recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed);
             lcd.setCursor(0, 0);
@@ -553,7 +559,7 @@ void dispenseMotor2A()
             Serial.println(amountToDispense);
             Serial.println("Calculating Food Consumed");
             float foodConsumed = calculateFoodConsumption();
-            LoadCell_petTray.tare();
+            // LoadCell_petTray.tare();
             Serial.println("Recording Feeding Data to Firestore");
             recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed);
             lcd.setCursor(0, 0);
@@ -603,7 +609,7 @@ void dispenseMotor2B()
             Serial.println(amountToDispense);
             Serial.println("Calculating Food Consumed");
             float foodConsumed = calculateFoodConsumption();
-            LoadCell_petTray.tare();
+            // LoadCell_petTray.tare();
             Serial.println("Recording Feeding Data to Firestore");
             recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed);
             lcd.setCursor(0, 0);
@@ -733,7 +739,9 @@ void initializeFirebase()
   auth.user.email = USER_EMAIL;
   auth.user.password = USER_PASSWORD;
 
+  Serial.println("Settting Up Firebase");
   Firebase.begin(&config, &auth);
+  Serial.println("Done Firebase Configure");
 
   if (Firebase.RTDB.beginStream(&fbdo1, pathGetPetWeight.c_str()))
   {
@@ -860,6 +868,7 @@ void handleReceive()
       initialPlatformWeight = roundf(initialWeightGramsToKG * 100) / 100; // Round to nearest 0.01
       Serial.println("Getting Initial Tray Weight...");
       initialTrayWeight = LoadCell_petTray.get_units(1);
+      lcd.clear();
 
       // Reset state for new dispensing session
       weightReadings.clear();
@@ -914,9 +923,9 @@ void configureLoadCells()
   // Display load cell configuration status on LCD
   lcd.clear();
   lcd.setCursor(0, 0);
-  lcd.print("Load Cells");
+  lcd.print("Calibration");
   lcd.setCursor(0, 1);
-  lcd.print("Configured");
+  lcd.print("Status: Done");
 }
 
 String generateRandomString(int length)
@@ -975,8 +984,18 @@ void recordFeedingDataToFirestore(const String &mode, const String &userName, fl
     Serial.println("Feeding record added successfully.");
     Serial.printf("ok\n%s\n\n", fbdo2.payload().c_str());
     // Display successful recording on LCD
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Dispensing Done");
     lcd.setCursor(0, 1);
     lcd.print("Data Recorded");
+
+    delay(2000);
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Waiting for");
+    lcd.setCursor(0, 1);
+    lcd.print("New Schedule...");
   }
   else
   {
@@ -1177,11 +1196,11 @@ void setFoodAmount()
   Serial.println(" %");
 
   // Update Firebase with the new percentages for Food1
-  if (Firebase.RTDB.setInt(&fbdo3, "/pets/food1/percentage", percentage1))
+  if (Firebase.RTDB.setInt(&fbdo3, "/foods/food1/percentage", percentage1))
   {
     Serial.println("Food1 percentage updated");
     // Update Firebase with the new percentages for Food2
-    if (Firebase.RTDB.setInt(&fbdo3, "/pets/food2/percentage", percentage2))
+    if (Firebase.RTDB.setInt(&fbdo3, "/foods/food2/percentage", percentage2))
     {
       Serial.println("Food2 percentage updated");
       // Make the firebase path false only if both updates are successful
