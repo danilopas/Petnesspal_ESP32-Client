@@ -25,8 +25,8 @@ const int petTray_sck = 4;
 const int platformLoadCell_dout = 32;
 const int platformLoadCell_sck = 33;
 // Calibration values
-float calibrationValue_petTray = 1955.32;  // petTray Calibration - Past Values: 2291.28 , 2642.85, 2542.704,  1955.32
-float calibrationValue_platform = -21.114; // platform Calibration - Past Values: 21.68
+float calibrationValue_petTray = 1919.42; // petTray Calibration - Past Values: 2291.28 , 2642.85, 2542.704,  1955.32
+float calibrationValue_platform = -21.75; // platform Calibration - Past Values: 21.68
 // LoadCell objects+
 HX711 LoadCell_petTray;
 HX711 LoadCell_platform;
@@ -44,7 +44,7 @@ int motor2Relay = 13; // Relay for motor2
 // Motor Config/constructor
 const int motorSpeed = 100;
 const int stepsPerRevolution = 200;
-const int smallStep = 250;                                    // Small step size for motor control
+const int smallStep = 140;                                    // Small step size for motor control
 Stepper motor1 = Stepper(stepsPerRevolution, 12, 14, 27, 26); // motor1
 Stepper motor2 = Stepper(stepsPerRevolution, 17, 5, 18, 19);  // motor2
 
@@ -71,7 +71,7 @@ const int foodTwoEchoPin = 35;
 vector<float> weightReadings;
 int consistentCount = 0;
 const int smoothingWindow = 5;             // Number of readings to average
-const int consistentReadingsThreshold = 3; // Number of consistent readings before stopping
+const int consistentReadingsThreshold = 2; // Number of consistent readings before stopping
 const float tolerance = 0.7;               // Allowable error margin in grams
 
 // Selected Motor for Dispensing Food
@@ -119,7 +119,7 @@ void handleReceive();
 void dispenseMotor1A();
 void dispenseMotor1B();
 void stopDispenseMotor1();
-void recordFeedingDataToFirestore(const String &mode, const String &userName, float amount, const String &scheduleDate, const String &scheduledTime, const String &cageID, float initialWeight, float foodConsumed);
+void recordFeedingDataToFirestore(const String &mode, const String &userName, float amount, const String &scheduleDate, const String &scheduledTime, const String &cageID, float initialWeight, float foodConsumed, float smoothedWeight);
 String generateRandomString(int length);
 void connectToWifi();
 void configureLoadCells();
@@ -258,7 +258,7 @@ void loop()
               Serial.println("Calculating Food Consumed");
               float foodConsumed = calculateFoodConsumption();
               Serial.println("Recording Feeding Data to Firestore");
-              recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed);
+              recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed, smoothedWeight);
               Serial.println("Resetting the Data Received Flag");
               dataReceived = false;
               newDataReady = false;
@@ -266,7 +266,7 @@ void loop()
             else
             {
               // Adjust rotation limit based on selected motor
-              int rotationLimit = (selectedMotor == 1) ? 3 : 4;
+              int rotationLimit = (selectedMotor == 1) ? 1 : 1;
 
               if (rotationCount < rotationLimit)
               {
@@ -401,6 +401,94 @@ bool checkThresholdDuringDispense(float threshold, float tolerance)
   return false;
 }
 
+// FIRST TEST FOR EATING EVENT
+// bool checkThresholdDuringDispense(float threshold, float tolerance)
+// {
+//   if (weightReadings.empty())
+//   {
+//     return false; // Ensure weightReadings is not empty
+//   }
+
+//   float smoothedWeight = accumulate(weightReadings.begin(), weightReadings.end(), 0.0) / weightReadings.size();
+
+//   Serial.print("Current Smoothed Weight: ");
+//   Serial.println(smoothedWeight);
+//   lcd.setCursor(0, 0);
+//   lcd.print("Amount Dispensed");
+//   lcd.setCursor(0, 1);
+//   lcd.print(String(smoothedWeight));
+
+//   if (abs(smoothedWeight - threshold) <= tolerance)
+//   {
+//     consistentCount++;
+//     Serial.print("Consistent Count: ");
+//     Serial.println(consistentCount);
+
+//     if (consistentCount >= consistentReadingsThreshold)
+//     { // Adjust consistentCountThreshold if needed
+//       return true;
+//     }
+//   }
+//   else if (smoothedWeight < threshold) // Add condition to handle weight decrease due to pet eating
+//   {
+//     Serial.println("Detected possible pet eating event, ignoring weight decrease.");
+//   }
+//   else
+//   {
+//     consistentCount = 0; // Reset if the weight is not within the tolerance
+//   }
+
+//   return false;
+// }
+
+// SECOND TEST FOR EATING EVENT
+// bool checkThresholdDuringDispense(float threshold, float tolerance)
+// {
+//   if (weightReadings.empty())
+//   {
+//     return false; // Ensure weightReadings is not empty
+//   }
+
+//   float smoothedWeight = accumulate(weightReadings.begin(), weightReadings.end(), 0.0) / weightReadings.size();
+//   static float previousWeight = smoothedWeight; // Keep track of previous weight
+//   static float weightDecreaseDueToEating = 0.0; // Track weight decrease due to pet eating
+//   const float eatingThreshold = 5.0;            // Define the threshold for detecting pet eating (in grams)
+
+//   Serial.print("Current Smoothed Weight: ");
+//   Serial.println(smoothedWeight);
+//   lcd.setCursor(0, 0);
+//   lcd.print("Amount Dispensed");
+//   lcd.setCursor(0, 1);
+//   lcd.print(String(smoothedWeight));
+
+//   // Adjust the threshold check to account for any weight decrease due to eating
+//   if (abs((smoothedWeight + weightDecreaseDueToEating) - threshold) <= tolerance)
+//   {
+//     consistentCount++;
+//     Serial.print("Consistent Count: ");
+//     Serial.println(consistentCount);
+
+//     if (consistentCount >= consistentReadingsThreshold)
+//     {
+//       weightDecreaseDueToEating = 0.0; // Reset weight decrease tracking on successful dispense
+//       return true;
+//     }
+//   }
+//   else if ((previousWeight - smoothedWeight) >= eatingThreshold) // Handle weight decrease due to pet eating
+//   {
+//     Serial.println("Detected possible pet eating event, ignoring weight decrease.");
+//     weightDecreaseDueToEating += (previousWeight - smoothedWeight); // Track the decrease
+//   }
+//   else
+//   {
+//     consistentCount = 0;             // Reset if the weight is not within the tolerance
+//     weightDecreaseDueToEating = 0.0; // Also reset weight decrease tracking if out of tolerance
+//   }
+
+//   previousWeight = smoothedWeight; // Update previousWeight
+//   return false;
+// }
+
 void updateWeightReadings()
 {
   float petTrayAmount = LoadCell_petTray.get_units();
@@ -461,7 +549,7 @@ void dispenseMotor1A()
             float foodConsumed = calculateFoodConsumption();
             // LoadCell_petTray.tare();
             Serial.println("Recording Feeding Data to Firestore");
-            recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed);
+            recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed, smoothedWeight);
             lcd.setCursor(0, 0);
             lcd.print("Stored Data");
             lcd.setCursor(0, 1);
@@ -511,7 +599,7 @@ void dispenseMotor1B()
             float foodConsumed = calculateFoodConsumption();
             // LoadCell_petTray.tare();
             Serial.println("Recording Feeding Data to Firestore");
-            recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed);
+            recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed, smoothedWeight);
             lcd.setCursor(0, 0);
             lcd.print("Stored Data");
             lcd.setCursor(0, 1);
@@ -561,7 +649,7 @@ void dispenseMotor2A()
             float foodConsumed = calculateFoodConsumption();
             // LoadCell_petTray.tare();
             Serial.println("Recording Feeding Data to Firestore");
-            recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed);
+            recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed, smoothedWeight);
             lcd.setCursor(0, 0);
             lcd.print("Stored Data");
             lcd.setCursor(0, 1);
@@ -611,7 +699,7 @@ void dispenseMotor2B()
             float foodConsumed = calculateFoodConsumption();
             // LoadCell_petTray.tare();
             Serial.println("Recording Feeding Data to Firestore");
-            recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed);
+            recordFeedingDataToFirestore(feedingModeType, userName, amountToDispense, scheduleDate, scheduledTime, cageID, initialPlatformWeight, foodConsumed, smoothedWeight);
             lcd.setCursor(0, 0);
             lcd.print("Stored Data");
             lcd.setCursor(0, 1);
@@ -940,7 +1028,7 @@ String generateRandomString(int length)
   return randomString;
 }
 
-void recordFeedingDataToFirestore(const String &mode, const String &userName, float amount, const String &scheduleDate, const String &scheduledTime, const String &cageID, float initialPlatformWeight, float foodConsumed)
+void recordFeedingDataToFirestore(const String &mode, const String &userName, float amount, const String &scheduleDate, const String &scheduledTime, const String &cageID, float initialPlatformWeight, float foodConsumed, float smoothedWeight)
 {
   // Debugging: Print the values of userName and scheduleDate
   Serial.print("userName: ");
@@ -964,6 +1052,7 @@ void recordFeedingDataToFirestore(const String &mode, const String &userName, fl
   content.set("fields/cageID/stringValue", cageID);
   content.set("fields/weight/doubleValue", initialPlatformWeight);
   content.set("fields/foodConsumed/doubleValue", foodConsumed);
+  content.set("fields/smoothedWeight/doubleValue", smoothedWeight);
 
   // Debugging: Print the content JSON
   Serial.println("Content JSON to be sent:");
